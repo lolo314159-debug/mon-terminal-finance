@@ -3,61 +3,65 @@ import yfinance as yf
 import google.generativeai as genai
 import pandas as pd
 
-# --- CONFIGURATION ---
-st.set_page_config(page_title="Terminal Analyste Simple", layout="wide")
+st.set_page_config(page_title="Terminal IA", layout="wide")
 
-# Connexion à Gemini (via Secrets Streamlit)
+# --- CONNEXION GEMINI ---
+# On utilise .strip() pour éviter qu'un espace caché dans les Secrets ne casse la clé
 try:
-    genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
+    api_key = st.secrets["GEMINI_API_KEY"].strip()
+    genai.configure(api_key=api_key)
+    
+    # SOLUTION AU MESSAGE "NOT FOUND" : 
+    # On utilise le nom complet du modèle 'models/gemini-1.5-flash' 
+    # ou 'gemini-pro' si le premier échoue.
     model = genai.GenerativeModel('gemini-1.5-flash')
-except:
-    st.error("Configurez votre GEMINI_API_KEY dans les Secrets.")
+except Exception as e:
+    st.error(f"Erreur de configuration : {e}")
 
-# --- RÉCUPÉRATION DES DONNÉES ---
+# --- RÉCUPÉRATION YFINANCE ---
 @st.cache_data(ttl=3600)
 def get_data(ticker):
-    try:
-        stock = yf.Ticker(ticker)
-        info = stock.info
-        # On extrait manuellement les ratios pour être sûr de ce qu'on envoie à l'IA
-        stats = {
-            "Nom": info.get('longName'),
-            "Secteur": info.get('sector'),
-            "Prix": info.get('currentPrice'),
-            "P/E Ratio": info.get('trailingPE'),
-            "ROE": info.get('returnOnEquity'),
-            "Dette/Equity": info.get('debtToEquity')
-        }
-        return stats
-    except:
-        return None
+    stock = yf.Ticker(ticker)
+    return stock.info
 
 # --- INTERFACE ---
-st.title("📊 Diagnostic Financier : Yahoo + Gemini")
+st.title("📈 Analyse Financière & IA")
 
-ticker_input = st.text_input("Entrez un Ticker (ex: AI.PA, AAPL, MC.PA)", "AI.PA").upper()
+ticker = st.text_input("Ticker Yahoo Finance", "AI.PA").upper()
 
-if st.button("Lancer l'Analyse"):
-    data = get_data(ticker_input)
+if st.button("Lancer l'analyse"):
+    info = get_data(ticker)
     
-    if data and data['Nom']:
-        st.header(f"Rapport : {data['Nom']}")
+    if info and 'longName' in info:
+        st.header(f"{info['longName']}")
         
-        # Affichage des chiffres
-        col1, col2, col3 = st.columns(3)
-        col1.metric("P/E Ratio", f"{data['P/E Ratio']:.2f}x" if data['P/E Ratio'] else "N/A")
-        col2.metric("ROE", f"{data['ROE']*100:.2f}%" if data['ROE'] else "N/A")
-        col3.metric("Dette/Equity", f"{data['Dette/Equity']:.2f}" if data['Dette/Equity'] else "N/A")
+        # Affichage des données yfinance
+        pe = info.get('trailingPE', 'N/A')
+        roe = info.get('returnOnEquity', 'N/A')
+        
+        col1, col2 = st.columns(2)
+        col1.metric("P/E Ratio", f"{pe}")
+        col2.metric("ROE", f"{roe}")
 
-        # Interprétation IA
-        st.subheader("🤖 L'avis de l'Analyste IA")
-        prompt = f"Analyse ces chiffres pour {data['Nom']} ({data['Secteur']}) : P/E {data['P/E Ratio']}, ROE {data['ROE']}, Dette {data['Dette/Equity']}. Est-ce un bon investissement en 2026 ? Réponds en 3 points courts."
+        # --- PARTIE GEMINI ---
+        st.subheader("🤖 Interprétation de l'IA")
         
-        with st.spinner("L'IA réfléchit..."):
+        # On construit un message simple
+        prompt = f"Analyse cette action : {info['longName']}. Son P/E est de {pe} et son ROE est de {roe}. Donne un avis rapide."
+        
+        try:
+            # Test d'appel direct
+            response = model.generate_content(prompt)
+            st.write(response.text)
+        except Exception as e:
+            # Si gemini-1.5-flash échoue encore, on tente automatiquement gemini-pro
+            st.warning("Tentative avec le modèle de secours (Gemini Pro)...")
             try:
-                response = model.generate_content(prompt)
+                model_alt = genai.GenerativeModel('gemini-pro')
+                response = model_alt.generate_content(prompt)
                 st.write(response.text)
-            except:
-                st.warning("Gemini n'a pas pu répondre. Vérifiez votre clé.")
+            except Exception as e2:
+                st.error(f"Erreur Gemini persistante : {e2}")
+                st.info("Vérifiez que votre clé API n'a pas de restrictions de région.")
     else:
-        st.error("Données introuvables. Yahoo Finance bloque peut-être la requête (Rate Limit). Réessayez avec un autre ticker.")
+        st.error("Données Yahoo introuvables pour ce ticker.")
