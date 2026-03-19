@@ -2,79 +2,82 @@ import streamlit as st
 import yfinance as yf
 import pandas as pd
 
-# Configuration de la page
-st.set_page_config(page_title="Terminal d'Analyse Financière", layout="wide")
+st.set_page_config(page_title="Terminal Expert", layout="wide")
 
-st.title("📊 Terminal d'Analyste : Performance & Valorisation")
-st.markdown("---")
-
-# 1. Fonction de récupération des données avec CACHE (évite le ban IP)
 @st.cache_data(ttl=3600)
-def get_data(symbol):
+def get_full_data(symbol):
     try:
-        ticker = yf.Ticker(symbol)
-        # On récupère tout en un seul appel pour limiter les requêtes
-        info = ticker.info
-        hist = ticker.history(period="2y") # 2 ans pour voir la tendance
-        # Pour les ratios complexes, on peut extraire le bilan si besoin :
-        # balance = ticker.balance_sheet
-        return info, hist
-    except Exception as e:
-        return None, None
+        t = yf.Ticker(symbol)
+        return t.info
+    except:
+        return None
 
-# 2. Formulaire de recherche (Sécurité anti-spam)
+# --- SIDEBAR ---
 with st.sidebar:
-    st.header("Paramètres")
-    with st.form("search_form"):
-        ticker_input = st.text_input("Ticker Yahoo Finance", value="AI.PA")
-        submit_button = st.form_submit_button("Lancer l'Analyse")
-    
-    st.info("💡 Indices Tickers :\n- Air Liquide : AI.PA\n- LVMH : MC.PA\n- Apple : AAPL\n- Total : TTE.PA")
+    st.header("Configuration")
+    ticker = st.text_input("Ticker", "AI.PA").upper()
+    analyze = st.button("Lancer le Diagnostic")
 
-# 3. Affichage des résultats
-if submit_button:
-    info, hist = get_data(ticker_input)
-    
-    if info and not hist.empty:
-        # --- HEADER ---
-        st.header(f"{info.get('longName', ticker_input)} ({info.get('currency', 'EUR')})")
-        
-        # --- BLOC 1 : VALORISATION ---
-        st.subheader("1. Valorisation & Marché")
-        col1, col2, col3, col4 = st.columns(4)
-        
-        pe = info.get('trailingPE', 'N/A')
-        yield_div = info.get('dividendYield', 0) * 100
-        mkt_cap = info.get('marketCap', 0) / 1e9 # En Milliards
-        
-        col1.metric("P/E Ratio", f"{pe:.2f}" if isinstance(pe, (int, float)) else "N/A")
-        col2.metric("Rendement (Yield)", f"{yield_div:.2f} %")
-        col3.metric("Capit. Boursière", f"{mkt_cap:.2f} Md")
-        col4.metric("Prix Actuel", f"{info.get('currentPrice', 'N/A')} {info.get('currency', '')}")
+# --- LOGIQUE D'INTERPRÉTATION ---
+def diagnostic(value, threshold, mode="sup"):
+    if value == "N/A": return "⚪ Donnée manquante", "grey"
+    if mode == "sup": # Plus c'est haut, mieux c'est (ex: ROE)
+        if value > threshold: return "✅ Solide", "green"
+        return "⚠️ À surveiller", "orange"
+    else: # Plus c'est bas, mieux c'est (ex: Gearing)
+        if value < threshold: return "✅ Sain", "green"
+        return "🚨 Risqué", "red"
 
-        # --- BLOC 2 : RENTABILITÉ & STRUCTURE ---
-        st.subheader("2. Santé Financière & Rentabilité")
-        c1, c2, c3 = st.columns(3)
+# --- AFFICHAGE ---
+if analyze:
+    data = get_full_data(ticker)
+    if data:
+        st.header(f"Analyse de {data.get('longName')} - {ticker}")
         
-        roe = info.get('returnOnEquity', 0) * 100
-        margin = info.get('ebitdaMargins', 0) * 100
-        # Levier financier simplifié (Dette/Equité)
-        debt_to_equity = info.get('debtToEquity', 'N/A')
-        
-        c1.metric("ROE (Rentabilité FP)", f"{roe:.2f} %")
-        c2.metric("Marge EBITDA", f"{margin:.2f} %")
-        c3.metric("Ratio d'endettement", f"{debt_to_equity}" if debt_to_equity == 'N/A' else f"{debt_to_equity:.2f}")
+        # Préparation des ratios
+        ratios = {
+            "ROE (Rentabilité)": (data.get('returnOnEquity', 0) * 100, 15, "sup", "%"),
+            "Gearing (Endettement)": (data.get('debtToEquity', 0) / 100, 1.2, "inf", "x"),
+            "Marge Opé.": (data.get('operatingMargins', 0) * 100, 10, "sup", "%"),
+            "P/E (Valorisation)": (data.get('trailingPE', 0), 20, "inf", "x"),
+            "Current Ratio (Liquidité)": (data.get('currentRatio', 0), 1, "sup", "x")
+        }
 
-        # --- BLOC 3 : GRAPHIQUE ---
-        st.subheader("3. Historique du Cours (2 ans)")
-        st.line_chart(hist['Close'])
+        # --- TABLEAU DE BORD (Le "Tableur" automatisé) ---
+        st.subheader("📋 Tableau de Bord de l'Analyste")
         
-        # --- BLOC 4 : RÉSUMÉ ANALYSTE ---
-        with st.expander("Voir le profil de l'entreprise"):
-            st.write(info.get('longBusinessSummary', "Pas de résumé disponible."))
-            
+        rows = []
+        for name, (val, thresh, mode, unit) in ratios.items():
+            status, color = diagnostic(val, thresh, mode)
+            rows.append({
+                "Indicateur": name,
+                "Valeur": f"{val:.2f} {unit}" if isinstance(val, (int, float)) else "N/A",
+                "Seuil Critique": f"{thresh} {unit}",
+                "Verdict": status
+            })
+        
+        df = pd.DataFrame(rows)
+        st.table(df) # Utilisation de st.table pour le look "Spreadsheet"
+
+        # --- INTERPRÉTATION GLOBALE ---
+        st.markdown("---")
+        st.subheader("🧐 Synthèse de l'Expert")
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.info("**Points Forts :**")
+            if ratios["ROE (Rentabilité)"][0] > 15:
+                st.write("- Capacité d'autofinancement élevée (ROE > 15%).")
+            if ratios["Gearing (Endettement)"][0] < 1:
+                st.write("- Structure financière saine, peu de dépendance à la dette.")
+        
+        with col2:
+            st.warning("**Points de Vigilance :**")
+            if ratios["P/E (Valorisation)"][0] > 25:
+                st.write("- L'action semble chère payée par rapport aux bénéfices.")
+            if ratios["Current Ratio (Liquidité)"][0] < 1:
+                st.write("- Attention : l'entreprise pourrait manquer de cash à court terme.")
+
     else:
-        st.error("Impossible de récupérer les données. Vérifiez le Ticker ou attendez quelques minutes (Limite API Yahoo).")
-
-else:
-    st.write("👈 Entrez un Ticker dans la barre latérale et cliquez sur 'Lancer l'Analyse'.")
+        st.error("Ticker non trouvé.")
