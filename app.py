@@ -1,41 +1,31 @@
 import streamlit as st
 import yfinance as yf
-import pandas as pd
 
-st.title("📊 Mon Terminal d'Analyste Financier 2026")
+# 1. On crée une fonction de récupération avec CACHE
+@st.cache_data(ttl=3600) # Cache les données pendant 1h (3600 sec)
+def get_financial_data(ticker_symbol):
+    try:
+        ticker = yf.Ticker(ticker_symbol)
+        # On ne demande que les infos essentielles pour éviter le ban
+        return ticker.info, ticker.history(period="1y")
+    except Exception as e:
+        return None, None
 
-# 1. Sélection de l'entreprise (Ticker Yahoo Finance)
-ticker_symbol = st.text_input("Entrez le Ticker (ex: AI.PA pour Air Liquide, MC.PA pour LVMH)", "AI.PA")
-ticker = yf.Ticker(ticker_symbol)
+st.title("📊 Terminal d'Analyste (Mode Sécurisé)")
 
-# 2. Récupération des données
-info = ticker.info
-balance_sheet = ticker.balance_sheet
-cash_flow = ticker.cashflow
+symbol = st.text_input("Ticker (ex: AI.PA, MC.PA, AAPL)", "AI.PA")
 
-# 3. Calcul des ratios clés
-st.subheader("Indicateurs de Performance")
-col1, col2, col3 = st.columns(3)
+# 2. Utilisation de la fonction cachée
+info, hist = get_financial_data(symbol)
 
-with col1:
-    pe_ratio = info.get('trailingPE', 'N/A')
-    st.metric("P/E Ratio", f"{pe_ratio:.2f}" if isinstance(pe_ratio, float) else "N/A")
-
-with col2:
-    # Calcul simplifié du Gearing (Dette Totale / Capitaux Propres)
-    total_debt = balance_sheet.loc['Total Debt'][0]
-    equity = balance_sheet.loc['Stockholders Equity'][0]
-    gearing = total_debt / equity
-    st.metric("Gearing", f"{gearing:.2%}")
-
-with col3:
-    # Calcul du Free Cash Flow Yield
-    fcf = cash_flow.loc['Free Cash Flow'][0]
-    mkt_cap = info.get('marketCap', 1)
-    fcf_yield = fcf / mkt_cap
-    st.metric("FCF Yield", f"{fcf_yield:.2%}")
-
-# 4. Graphique du cours de bourse
-st.subheader("Évolution du Cours")
-hist = ticker.history(period="1y")
-st.line_chart(hist['Close'])
+if info:
+    st.success(f"Données chargées pour {info.get('longName')}")
+    
+    # Affichage des metrics
+    col1, col2 = st.columns(2)
+    col1.metric("P/E Ratio", info.get('trailingPE', 'N/A'))
+    col2.metric("Yield (%)", f"{info.get('dividendYield', 0)*100:.2f}%")
+    
+    st.line_chart(hist['Close'])
+else:
+    st.error("Erreur de récupération : Trop de requêtes. Attendez quelques minutes.")
