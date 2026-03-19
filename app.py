@@ -5,18 +5,25 @@ import pandas as pd
 
 st.set_page_config(page_title="Terminal IA", layout="wide")
 
-# --- CONNEXION GEMINI ---
-# On utilise .strip() pour éviter qu'un espace caché dans les Secrets ne casse la clé
+# Nettoyage de la clé
+api_key = st.secrets["GEMINI_API_KEY"].strip()
+genai.configure(api_key=api_key)
+
+# TEST DE FORCE : On essaie le nom le plus récent compatible avec v1beta
 try:
-    api_key = st.secrets["GEMINI_API_KEY"].strip()
-    genai.configure(api_key=api_key)
-    
-    # SOLUTION AU MESSAGE "NOT FOUND" : 
-    # On utilise le nom complet du modèle 'models/gemini-1.5-flash' 
-    # ou 'gemini-pro' si le premier échoue.
-    model = genai.GenerativeModel('gemini-1.5-flash')
+    # On spécifie le modèle exact qui fonctionne avec les nouvelles clés gratuites
+    model = genai.GenerativeModel(model_name='gemini-1.5-flash-latest')
+except:
+    # Secours si le premier échoue
+    model = genai.GenerativeModel(model_name='gemini-1.5-flash')
+
+# Pour vérifier si ça marche, on fait un mini test au démarrage
+try:
+    test_response = model.generate_content("ping")
+    st.sidebar.success("✅ Gemini Connecté")
 except Exception as e:
-    st.error(f"Erreur de configuration : {e}")
+    st.sidebar.error(f"❌ Gemini Erreur : {e}")
+
 
 # --- RÉCUPÉRATION YFINANCE ---
 @st.cache_data(ttl=3600)
