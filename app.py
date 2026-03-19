@@ -1,67 +1,41 @@
 import streamlit as st
 import yfinance as yf
-import google.generativeai as genai
 import pandas as pd
 
-st.set_page_config(page_title="Terminal IA", layout="wide")
+st.title("📊 Mon Terminal d'Analyste Financier 2026")
 
-# --- CONNEXION GEMINI ---
-# On utilise .strip() pour éviter qu'un espace caché dans les Secrets ne casse la clé
-try:
-    api_key = st.secrets["GEMINI_API_KEY"].strip()
-    genai.configure(api_key=api_key)
-    
-    # SOLUTION AU MESSAGE "NOT FOUND" : 
-    # On utilise le nom complet du modèle 'models/gemini-1.5-flash' 
-    # ou 'gemini-pro' si le premier échoue.
-    model = genai.GenerativeModel('gemini-1.5-flash')
-except Exception as e:
-    st.error(f"Erreur de configuration : {e}")
+# 1. Sélection de l'entreprise (Ticker Yahoo Finance)
+ticker_symbol = st.text_input("Entrez le Ticker (ex: AI.PA pour Air Liquide, MC.PA pour LVMH)", "AI.PA")
+ticker = yf.Ticker(ticker_symbol)
 
-# --- RÉCUPÉRATION YFINANCE ---
-@st.cache_data(ttl=3600)
-def get_data(ticker):
-    stock = yf.Ticker(ticker)
-    return stock.info
+# 2. Récupération des données
+info = ticker.info
+balance_sheet = ticker.balance_sheet
+cash_flow = ticker.cashflow
 
-# --- INTERFACE ---
-st.title("📈 Analyse Financière & IA")
+# 3. Calcul des ratios clés
+st.subheader("Indicateurs de Performance")
+col1, col2, col3 = st.columns(3)
 
-ticker = st.text_input("Ticker Yahoo Finance", "AI.PA").upper()
+with col1:
+    pe_ratio = info.get('trailingPE', 'N/A')
+    st.metric("P/E Ratio", f"{pe_ratio:.2f}" if isinstance(pe_ratio, float) else "N/A")
 
-if st.button("Lancer l'analyse"):
-    info = get_data(ticker)
-    
-    if info and 'longName' in info:
-        st.header(f"{info['longName']}")
-        
-        # Affichage des données yfinance
-        pe = info.get('trailingPE', 'N/A')
-        roe = info.get('returnOnEquity', 'N/A')
-        
-        col1, col2 = st.columns(2)
-        col1.metric("P/E Ratio", f"{pe}")
-        col2.metric("ROE", f"{roe}")
+with col2:
+    # Calcul simplifié du Gearing (Dette Totale / Capitaux Propres)
+    total_debt = balance_sheet.loc['Total Debt'][0]
+    equity = balance_sheet.loc['Stockholders Equity'][0]
+    gearing = total_debt / equity
+    st.metric("Gearing", f"{gearing:.2%}")
 
-        # --- PARTIE GEMINI ---
-        st.subheader("🤖 Interprétation de l'IA")
-        
-        # On construit un message simple
-        prompt = f"Analyse cette action : {info['longName']}. Son P/E est de {pe} et son ROE est de {roe}. Donne un avis rapide."
-        
-        try:
-            # Test d'appel direct
-            response = model.generate_content(prompt)
-            st.write(response.text)
-        except Exception as e:
-            # Si gemini-1.5-flash échoue encore, on tente automatiquement gemini-pro
-            st.warning("Tentative avec le modèle de secours (Gemini Pro)...")
-            try:
-                model_alt = genai.GenerativeModel('gemini-pro')
-                response = model_alt.generate_content(prompt)
-                st.write(response.text)
-            except Exception as e2:
-                st.error(f"Erreur Gemini persistante : {e2}")
-                st.info("Vérifiez que votre clé API n'a pas de restrictions de région.")
-    else:
-        st.error("Données Yahoo introuvables pour ce ticker.")
+with col3:
+    # Calcul du Free Cash Flow Yield
+    fcf = cash_flow.loc['Free Cash Flow'][0]
+    mkt_cap = info.get('marketCap', 1)
+    fcf_yield = fcf / mkt_cap
+    st.metric("FCF Yield", f"{fcf_yield:.2%}")
+
+# 4. Graphique du cours de bourse
+st.subheader("Évolution du Cours")
+hist = ticker.history(period="1y")
+st.line_chart(hist['Close'])
