@@ -1,70 +1,63 @@
 import streamlit as st
-import requests
+import yfinance as yf
 import google.generativeai as genai
 import pandas as pd
-import json
-import time
 
 # --- CONFIGURATION ---
-st.set_page_config(page_title="Terminal Pro 2026", layout="wide")
+st.set_page_config(page_title="Terminal Analyste Simple", layout="wide")
 
-# Chargement sécurisé des clés
+# Connexion à Gemini (via Secrets Streamlit)
 try:
-    AV_KEY = st.secrets["AV_API_KEY"]
     genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
-    # Utilisation du nom de modèle le plus universel
     model = genai.GenerativeModel('gemini-1.5-flash')
-except Exception as e:
-    st.error("⚠️ Erreur : Vérifiez AV_API_KEY et GEMINI_API_KEY dans vos Secrets Streamlit.")
+except:
+    st.error("Configurez votre GEMINI_API_KEY dans les Secrets.")
 
-# --- FETCH DATA (Alpha Vantage) ---
+# --- RÉCUPÉRATION DES DONNÉES ---
 @st.cache_data(ttl=3600)
-def get_stock_data(symbol):
-    url = f'https://www.alphavantage.co/query?function=OVERVIEW&symbol={symbol}&apikey={AV_KEY}'
-    r = requests.get(url)
-    data = r.json()
+def get_data(ticker):
+    try:
+        stock = yf.Ticker(ticker)
+        info = stock.info
+        # On extrait manuellement les ratios pour être sûr de ce qu'on envoie à l'IA
+        stats = {
+            "Nom": info.get('longName'),
+            "Secteur": info.get('sector'),
+            "Prix": info.get('currentPrice'),
+            "P/E Ratio": info.get('trailingPE'),
+            "ROE": info.get('returnOnEquity'),
+            "Dette/Equity": info.get('debtToEquity')
+        }
+        return stats
+    except:
+        return None
+
+# --- INTERFACE ---
+st.title("📊 Diagnostic Financier : Yahoo + Gemini")
+
+ticker_input = st.text_input("Entrez un Ticker (ex: AI.PA, AAPL, MC.PA)", "AI.PA").upper()
+
+if st.button("Lancer l'Analyse"):
+    data = get_data(ticker_input)
     
-    # Gestion de la limite d'API (5/min)
-    if "Note" in data:
-        st.warning("⏳ Limite API Alpha Vantage atteinte (5/min). Patientez 60 secondes...")
-        return "LIMIT"
-    return data if "Symbol" in data else None
-
-# --- UI ---
-st.title("🛡️ Terminal d'Analyse Robuste")
-st.info("💡 Rappel : 5 recherches max par minute (version gratuite Alpha Vantage).")
-
-with st.sidebar:
-    ticker = st.text_input("Action (ex: AAPL, AI.PAR, MC.PAR)", "AAPL").upper()
-    btn = st.button("Lancer l'Audit")
-
-if btn:
-    with st.spinner("Consultation des bases de données..."):
-        data = get_stock_data(ticker)
+    if data and data['Nom']:
+        st.header(f"Rapport : {data['Nom']}")
         
-        if data == "LIMIT":
-            st.info("Veuillez cliquer de nouveau sur le bouton dans une minute.")
-        elif data:
-            st.header(f"Rapport : {data['Name']}")
-            
-            # --- BLOC CHIFFRES ---
-            col1, col2 = st.columns(2)
-            with col1:
-                st.subheader("📊 Ratios de Marché")
-                # On gère les valeurs potentiellement vides (None)
-                pe = data.get('PERatio', 'N/A')
-                roe = data.get('ReturnOnEquityTTM', 'N/A')
-                st.metric("P/E Ratio", f"{pe}x")
-                st.metric("ROE", roe)
+        # Affichage des chiffres
+        col1, col2, col3 = st.columns(3)
+        col1.metric("P/E Ratio", f"{data['P/E Ratio']:.2f}x" if data['P/E Ratio'] else "N/A")
+        col2.metric("ROE", f"{data['ROE']*100:.2f}%" if data['ROE'] else "N/A")
+        col3.metric("Dette/Equity", f"{data['Dette/Equity']:.2f}" if data['Dette/Equity'] else "N/A")
 
-            # --- BLOC IA ---
-            with col2:
-                st.subheader("🤖 Diagnostic IA")
-                prompt = f"Analyse {data['Name']} ({data['Sector']}). Verdict 2026 : Acheter, Vendre ou Conserver ? 2 phrases max."
-                try:
-                    response = model.generate_content(prompt)
-                    st.success(response.text)
-                except Exception as e:
-                    st.error("L'IA n'a pas pu répondre. Vérifiez si votre clé Gemini est active.")
-        else:
-            st.error("Ticker inconnu ou erreur serveur. Essayez AI.PAR pour Air Liquide.")
+        # Interprétation IA
+        st.subheader("🤖 L'avis de l'Analyste IA")
+        prompt = f"Analyse ces chiffres pour {data['Nom']} ({data['Secteur']}) : P/E {data['P/E Ratio']}, ROE {data['ROE']}, Dette {data['Dette/Equity']}. Est-ce un bon investissement en 2026 ? Réponds en 3 points courts."
+        
+        with st.spinner("L'IA réfléchit..."):
+            try:
+                response = model.generate_content(prompt)
+                st.write(response.text)
+            except:
+                st.warning("Gemini n'a pas pu répondre. Vérifiez votre clé.")
+    else:
+        st.error("Données introuvables. Yahoo Finance bloque peut-être la requête (Rate Limit). Réessayez avec un autre ticker.")
