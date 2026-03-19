@@ -3,60 +3,68 @@ import requests
 import google.generativeai as genai
 import pandas as pd
 import json
+import time
 
 # --- CONFIGURATION ---
 st.set_page_config(page_title="Terminal Pro 2026", layout="wide")
 
+# Chargement sécurisé des clés
 try:
     AV_KEY = st.secrets["AV_API_KEY"]
     genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
-    # On utilise la version la plus stable du modèle
+    # Utilisation du nom de modèle le plus universel
     model = genai.GenerativeModel('gemini-1.5-flash')
-except:
-    st.error("⚠️ Configurer AV_API_KEY et GEMINI_API_KEY dans les Secrets Streamlit.")
+except Exception as e:
+    st.error("⚠️ Erreur : Vérifiez AV_API_KEY et GEMINI_API_KEY dans vos Secrets Streamlit.")
 
-# --- FETCH DATA ---
+# --- FETCH DATA (Alpha Vantage) ---
 @st.cache_data(ttl=3600)
 def get_stock_data(symbol):
     url = f'https://www.alphavantage.co/query?function=OVERVIEW&symbol={symbol}&apikey={AV_KEY}'
     r = requests.get(url)
-    return r.json() if "Symbol" in r.json() else None
+    data = r.json()
+    
+    # Gestion de la limite d'API (5/min)
+    if "Note" in data:
+        st.warning("⏳ Limite API Alpha Vantage atteinte (5/min). Patientez 60 secondes...")
+        return "LIMIT"
+    return data if "Symbol" in data else None
 
 # --- UI ---
-st.title("⚖️ Arbitrage & Comparaison Stratégique")
+st.title("🛡️ Terminal d'Analyse Robuste")
+st.info("💡 Rappel : 5 recherches max par minute (version gratuite Alpha Vantage).")
 
 with st.sidebar:
-    st.header("Sélection")
-    main_ticker = st.text_input("Action principale (ex: AAPL, AI.PAR)", "AAPL").upper()
-    comp_ticker = st.text_input("Comparer avec (ex: MSFT, LIN)", "MSFT").upper()
-    btn = st.button("Lancer l'Analyse Comparative")
+    ticker = st.text_input("Action (ex: AAPL, AI.PAR, MC.PAR)", "AAPL").upper()
+    btn = st.button("Lancer l'Audit")
 
 if btn:
-    with st.spinner("Audit en cours..."):
-        data1 = get_stock_data(main_ticker)
-        data2 = get_stock_data(comp_ticker)
+    with st.spinner("Consultation des bases de données..."):
+        data = get_stock_data(ticker)
         
-        if data1 and data2:
-            # --- SECTION 1 : MATCH FACE À FACE ---
-            st.subheader(f"⚔️ {data1['Name']} vs {data2['Name']}")
+        if data == "LIMIT":
+            st.info("Veuillez cliquer de nouveau sur le bouton dans une minute.")
+        elif data:
+            st.header(f"Rapport : {data['Name']}")
             
-            comp_df = pd.DataFrame({
-                "Indicateur": ["Secteur", "P/E Ratio", "ROE", "Marge Profite"],
-                data1['Symbol']: [data1['Sector'], data1['PERatio'], data1['ReturnOnEquityTTM'], data1['ProfitMargin']],
-                data2['Symbol']: [data2['Sector'], data2['PERatio'], data2['ReturnOnEquityTTM'], data2['ProfitMargin']]
-            })
-            st.table(comp_df)
+            # --- BLOC CHIFFRES ---
+            col1, col2 = st.columns(2)
+            with col1:
+                st.subheader("📊 Ratios de Marché")
+                # On gère les valeurs potentiellement vides (None)
+                pe = data.get('PERatio', 'N/A')
+                roe = data.get('ReturnOnEquityTTM', 'N/A')
+                st.metric("P/E Ratio", f"{pe}x")
+                st.metric("ROE", roe)
 
-            # --- SECTION 2 : L'AVIS DE L'IA ---
-            st.divider()
-            prompt = f"Analyse le match financier entre {data1['Name']} et {data2['Name']}. Qui a le meilleur profil de risque en 2026 ? Réponds en 3 points clés."
-            
-            try:
-                response = model.generate_content(prompt)
-                st.subheader("🤖 Analyse Comparative de l'IA")
-                st.info(response.text)
-            except:
-                st.warning("L'IA est momentanément indisponible.")
-                
+            # --- BLOC IA ---
+            with col2:
+                st.subheader("🤖 Diagnostic IA")
+                prompt = f"Analyse {data['Name']} ({data['Sector']}). Verdict 2026 : Acheter, Vendre ou Conserver ? 2 phrases max."
+                try:
+                    response = model.generate_content(prompt)
+                    st.success(response.text)
+                except Exception as e:
+                    st.error("L'IA n'a pas pu répondre. Vérifiez si votre clé Gemini est active.")
         else:
-            st.error("Un des tickers est introuvable (ou limite API 5/min atteinte).")
+            st.error("Ticker inconnu ou erreur serveur. Essayez AI.PAR pour Air Liquide.")
