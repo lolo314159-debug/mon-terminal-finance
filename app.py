@@ -4,78 +4,59 @@ import google.generativeai as genai
 import pandas as pd
 import json
 
-st.set_page_config(page_title="Terminal Analyste Pro", layout="wide")
+# --- CONFIGURATION ---
+st.set_page_config(page_title="Terminal Pro 2026", layout="wide")
 
-# --- CONFIGURATION API ---
 try:
     AV_KEY = st.secrets["AV_API_KEY"]
     genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
-    # On utilise 'gemini-pro', souvent plus robuste au déploiement initial
-    model = genai.GenerativeModel('gemini-pro')
-except Exception as e:
-    st.error("Erreur de configuration des clés API dans les Secrets.")
+    # On utilise la version la plus stable du modèle
+    model = genai.GenerativeModel('gemini-1.5-flash')
+except:
+    st.error("⚠️ Configurer AV_API_KEY et GEMINI_API_KEY dans les Secrets Streamlit.")
 
-# --- DATA FETCHING (Alpha Vantage) ---
+# --- FETCH DATA ---
 @st.cache_data(ttl=3600)
 def get_stock_data(symbol):
-    # Alpha Vantage supporte mieux les tickers sans suffixe pour le NASDAQ/NYSE
-    # ou avec .PAR pour Paris.
     url = f'https://www.alphavantage.co/query?function=OVERVIEW&symbol={symbol}&apikey={AV_KEY}'
-    response = requests.get(url)
-    data = response.json()
-    if "Symbol" in data:
-        return data
-    return None
-
-# --- AI ANALYSIS ---
-def get_ai_insight(stock_info):
-    prompt = f"""
-    Analyse l'entreprise {stock_info.get('Name')} ({stock_info.get('Sector')}).
-    Réponds UNIQUEMENT en JSON avec ce format exact :
-    {{
-        "bench_pe": "valeur",
-        "bench_roe": "valeur",
-        "risque": "bas/moyen/haut",
-        "verdict": "ACHAT/VENTE/GARDE"
-    }}
-    """
-    try:
-        response = model.generate_content(prompt)
-        # Nettoyage pour ne garder que le JSON
-        res_text = response.text.strip().replace('```json', '').replace('```', '')
-        return json.loads(res_text)
-    except:
-        return None
+    r = requests.get(url)
+    return r.json() if "Symbol" in r.json() else None
 
 # --- UI ---
-st.title("🚀 Terminal d'Arbitrage Final")
+st.title("⚖️ Arbitrage & Comparaison Stratégique")
 
-ticker = st.text_input("Entrez un Ticker (ex: AAPL, AI.PAR, MC.PAR)", "AAPL").upper()
+with st.sidebar:
+    st.header("Sélection")
+    main_ticker = st.text_input("Action principale (ex: AAPL, AI.PAR)", "AAPL").upper()
+    comp_ticker = st.text_input("Comparer avec (ex: MSFT, LIN)", "MSFT").upper()
+    btn = st.button("Lancer l'Analyse Comparative")
 
-if st.button("Lancer l'Audit"):
-    with st.spinner("Interrogation des API sécurisées..."):
-        data = get_stock_data(ticker)
+if btn:
+    with st.spinner("Audit en cours..."):
+        data1 = get_stock_data(main_ticker)
+        data2 = get_stock_data(comp_ticker)
         
-        if data:
-            ai = get_ai_insight(data)
+        if data1 and data2:
+            # --- SECTION 1 : MATCH FACE À FACE ---
+            st.subheader(f"⚔️ {data1['Name']} vs {data2['Name']}")
             
-            st.header(f"Analyse de {data['Name']}")
+            comp_df = pd.DataFrame({
+                "Indicateur": ["Secteur", "P/E Ratio", "ROE", "Marge Profite"],
+                data1['Symbol']: [data1['Sector'], data1['PERatio'], data1['ReturnOnEquityTTM'], data1['ProfitMargin']],
+                data2['Symbol']: [data2['Sector'], data2['PERatio'], data2['ReturnOnEquityTTM'], data2['ProfitMargin']]
+            })
+            st.table(comp_df)
+
+            # --- SECTION 2 : L'AVIS DE L'IA ---
+            st.divider()
+            prompt = f"Analyse le match financier entre {data1['Name']} et {data2['Name']}. Qui a le meilleur profil de risque en 2026 ? Réponds en 3 points clés."
             
-            c1, c2 = st.columns(2)
-            with c1:
-                st.subheader("📊 Ratios Réels (Source: Alpha Vantage)")
-                pe = data.get('PERatio', 'N/A')
-                roe = data.get('ReturnOnEquityTTM', 'N/A')
-                st.metric("P/E Ratio", f"{pe}x")
-                st.metric("ROE", f"{roe}")
-            
-            with c2:
-                if ai:
-                    st.subheader("🤖 Diagnostic IA")
-                    st.write(f"**Verdict :** {ai['verdict']}")
-                    st.write(f"**Risque :** {ai['risque']}")
-                    st.write(f"**Benchmark P/E Secteur :** {ai['bench_pe']}")
-                else:
-                    st.warning("L'IA n'a pas pu générer le diagnostic. Vérifiez votre quota Gemini.")
+            try:
+                response = model.generate_content(prompt)
+                st.subheader("🤖 Analyse Comparative de l'IA")
+                st.info(response.text)
+            except:
+                st.warning("L'IA est momentanément indisponible.")
+                
         else:
-            st.error("Impossible de trouver ce ticker ou limite d'appels Alpha Vantage atteinte (5/min).")
+            st.error("Un des tickers est introuvable (ou limite API 5/min atteinte).")
