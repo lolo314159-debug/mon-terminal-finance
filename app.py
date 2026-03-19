@@ -4,81 +4,78 @@ import google.generativeai as genai
 import pandas as pd
 import json
 
-# --- CONFIGURATION ---
-st.set_page_config(page_title="Terminal Pro 2026", layout="wide")
+st.set_page_config(page_title="Terminal Analyste Pro", layout="wide")
 
-# Récupération des clés dans les Secrets
-AV_KEY = st.secrets["AV_API_KEY"]
-GEMINI_KEY = st.secrets["GEMINI_API_KEY"]
+# --- CONFIGURATION API ---
+try:
+    AV_KEY = st.secrets["AV_API_KEY"]
+    genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
+    # On utilise 'gemini-pro', souvent plus robuste au déploiement initial
+    model = genai.GenerativeModel('gemini-pro')
+except Exception as e:
+    st.error("Erreur de configuration des clés API dans les Secrets.")
 
-genai.configure(api_key=GEMINI_KEY)
-model = genai.GenerativeModel('gemini-1.5-flash')
-
-# --- FONCTION : DONNÉES RÉELLES (Alpha Vantage) ---
+# --- DATA FETCHING (Alpha Vantage) ---
 @st.cache_data(ttl=3600)
-def get_hard_data(symbol):
-    # Alpha Vantage utilise des tickers US ou globaux (ex: AI.PAR pour Air Liquide)
+def get_stock_data(symbol):
+    # Alpha Vantage supporte mieux les tickers sans suffixe pour le NASDAQ/NYSE
+    # ou avec .PAR pour Paris.
     url = f'https://www.alphavantage.co/query?function=OVERVIEW&symbol={symbol}&apikey={AV_KEY}'
-    r = requests.get(url)
-    data = r.json()
-    return data if data and "Name" in data else None
+    response = requests.get(url)
+    data = response.json()
+    if "Symbol" in data:
+        return data
+    return None
 
-# --- FONCTION : ANALYSE IA (Gemini) ---
-def get_ai_diagnostic(data):
+# --- AI ANALYSIS ---
+def get_ai_insight(stock_info):
     prompt = f"""
-    Analyse cette entreprise : {data.get('Name')}. 
-    Secteur : {data.get('Sector')}.
-    Donne-moi UNIQUEMENT un JSON :
+    Analyse l'entreprise {stock_info.get('Name')} ({stock_info.get('Sector')}).
+    Réponds UNIQUEMENT en JSON avec ce format exact :
     {{
-        "bench_roe": "moyenne %",
-        "bench_pe": "moyenne x",
-        "bench_gearing": "moyenne x",
-        "verdict": "ACHAT/VENTE",
-        "risque_score": 0-10
+        "bench_pe": "valeur",
+        "bench_roe": "valeur",
+        "risque": "bas/moyen/haut",
+        "verdict": "ACHAT/VENTE/GARDE"
     }}
     """
-    response = model.generate_content(prompt)
     try:
-        clean_json = response.text.strip().replace('```json', '').replace('```', '')
-        return json.loads(clean_json)
-    except: return None
+        response = model.generate_content(prompt)
+        # Nettoyage pour ne garder que le JSON
+        res_text = response.text.strip().replace('```json', '').replace('```', '')
+        return json.loads(res_text)
+    except:
+        return None
 
-# --- INTERFACE ---
-st.title("🛡️ Terminal d'Arbitrage (Flux API Sécurisé)")
+# --- UI ---
+st.title("🚀 Terminal d'Arbitrage Final")
 
-with st.sidebar:
-    # Note : Alpha Vantage demande souvent .PAR au lieu de .PA pour Paris
-    ticker = st.text_input("Ticker (ex: AAPL, MC.PAR, AI.PAR)", "AAPL")
-    btn = st.button("Lancer l'Analyse")
+ticker = st.text_input("Entrez un Ticker (ex: AAPL, AI.PAR, MC.PAR)", "AAPL").upper()
 
-if btn:
-    with st.spinner("Récupération via API officielle..."):
-        stock_data = get_hard_data(ticker)
+if st.button("Lancer l'Audit"):
+    with st.spinner("Interrogation des API sécurisées..."):
+        data = get_stock_data(ticker)
         
-        if stock_data:
-            ai_data = get_ai_diagnostic(stock_data)
+        if data:
+            ai = get_ai_insight(data)
             
-            st.header(f"Rapport Financier : {stock_data['Name']}")
+            st.header(f"Analyse de {data['Name']}")
             
-            # --- TABLEAU COMPARATIF ---
-            col1, col2 = st.columns([2, 1])
+            c1, c2 = st.columns(2)
+            with c1:
+                st.subheader("📊 Ratios Réels (Source: Alpha Vantage)")
+                pe = data.get('PERatio', 'N/A')
+                roe = data.get('ReturnOnEquityTTM', 'N/A')
+                st.metric("P/E Ratio", f"{pe}x")
+                st.metric("ROE", f"{roe}")
             
-            with col1:
-                # Extraction des ratios (Alpha Vantage donne des strings, on les convertit)
-                roe = float(stock_data.get('ReturnOnEquityTTM', 0)) * 100
-                pe = float(stock_data.get('PERatio', 0))
-                debt = float(stock_data.get('DebtToEquityRatio', 0))
-                
-                df = pd.DataFrame([
-                    {"Ratio": "ROE", "Valeur": f"{roe:.2f}%", "Secteur (IA)": ai_data['bench_roe']},
-                    {"Ratio": "P/E", "Valeur": f"{pe:.2f}x", "Secteur (IA)": ai_data['bench_pe']},
-                    {"Ratio": "Dette/Equity", "Valeur": f"{debt:.2f}x", "Secteur (IA)": ai_data['bench_gearing']}
-                ])
-                st.table(df)
-            
-            with col2:
-                st.metric("Verdict", ai_data['verdict'])
-                st.write(f"**Score de Risque :** {ai_data['risque_score']}/10")
-                st.progress(ai_data['risque_score']/10)
+            with c2:
+                if ai:
+                    st.subheader("🤖 Diagnostic IA")
+                    st.write(f"**Verdict :** {ai['verdict']}")
+                    st.write(f"**Risque :** {ai['risque']}")
+                    st.write(f"**Benchmark P/E Secteur :** {ai['bench_pe']}")
+                else:
+                    st.warning("L'IA n'a pas pu générer le diagnostic. Vérifiez votre quota Gemini.")
         else:
-            st.error("Ticker non trouvé ou limite d'appels API atteinte (5/min pour la version gratuite Alpha Vantage).")
+            st.error("Impossible de trouver ce ticker ou limite d'appels Alpha Vantage atteinte (5/min).")
