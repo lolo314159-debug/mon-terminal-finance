@@ -17,24 +17,45 @@ def get_stock_data(ticker):
     return t.info
 
 def get_ai_insight(ticker_info):
-    """Interroge Gemini pour obtenir des benchmarks et une analyse"""
+    """Interroge Gemini avec un prompt structuré pour éviter les hallucinations"""
+    
+    # On prépare les données réelles pour nourrir l'IA
+    nom = ticker_info.get('longName')
+    secteur = ticker_info.get('sector')
+    industrie = ticker_info.get('industry')
+    
     prompt = f"""
-    En tant qu'analyste financier senior, analyse cette entreprise : {ticker_info.get('longName')}.
-    Secteur : {ticker_info.get('sector')}.
-    Donne-moi UNIQUEMENT un objet JSON avec les moyennes de son secteur pour 2026 :
+    CONTEXTE : Nous sommes en mars 2026. Tu es un analyste financier expert (CFA).
+    ENTREPRISE : {nom} (Secteur: {secteur}, Industrie: {industrie}).
+    
+    MISSION : Fournis des benchmarks sectoriels précis pour cette industrie en 2026.
+    
+    RÈGLES STRICTES :
+    1. Réponds UNIQUEMENT au format JSON.
+    2. Ne commente pas, ne salue pas.
+    3. Si une donnée est incertaine, fournis une estimation basée sur les leaders du secteur.
+    
+    STRUCTURE JSON ATTENDUE :
     {{
-        "bench_roe": "valeur en %",
-        "bench_pe": "valeur x",
-        "bench_gearing": "valeur x",
-        "analyse_risque": "une phrase courte sur le risque principal"
+        "bench_roe": "moyenne en %",
+        "bench_pe": "multiple moyen x",
+        "bench_gearing": "ratio moyen Dette/Equity",
+        "bench_fcf_margin": "marge de Free Cash Flow moyenne en %",
+        "analyse_dividende": "avis court sur la pérennité du dividende",
+        "risk_score": "note de 1 à 10 du risque de refinancement en 2026",
+        "verdict_ia": "Acheter/Conserver/Vendre (expliquer en 10 mots)"
     }}
     """
+    
     response = model.generate_content(prompt)
     try:
-        # Nettoyage de la réponse pour ne garder que le JSON
-        clean_json = response.text.strip().replace('```json', '').replace('```', '')
-        return json.loads(clean_json)
-    except:
+        # Nettoyage du texte pour extraire le JSON proprement
+        res_text = response.text.strip()
+        if "```json" in res_text:
+            res_text = res_text.split("```json")[1].split("```")[0]
+        return json.loads(res_text)
+    except Exception as e:
+        st.error(f"Erreur d'analyse IA : {e}")
         return None
 
 # --- INTERFACE ---
