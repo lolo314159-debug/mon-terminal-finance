@@ -1,83 +1,72 @@
 import streamlit as st
 import yfinance as yf
-import pandas as pd
+import google.generativeai as genai
+import json
 
-st.set_page_config(page_title="Terminal Expert", layout="wide")
+# --- CONFIGURATION ---
+st.set_page_config(page_title="Terminal AI Analyst", layout="wide")
+
+# Configurez votre clé ici (ou via st.secrets en ligne)
+GEMINI_API_KEY = st.secrets["GEMINI_API_KEY"]
+genai.configure(api_key=GEMINI_API_KEY)
+model = genai.GenerativeModel('gemini-1.5-flash')
 
 @st.cache_data(ttl=3600)
-def get_full_data(symbol):
+def get_stock_data(ticker):
+    t = yf.Ticker(ticker)
+    return t.info
+
+def get_ai_insight(ticker_info):
+    """Interroge Gemini pour obtenir des benchmarks et une analyse"""
+    prompt = f"""
+    En tant qu'analyste financier senior, analyse cette entreprise : {ticker_info.get('longName')}.
+    Secteur : {ticker_info.get('sector')}.
+    Donne-moi UNIQUEMENT un objet JSON avec les moyennes de son secteur pour 2026 :
+    {{
+        "bench_roe": "valeur en %",
+        "bench_pe": "valeur x",
+        "bench_gearing": "valeur x",
+        "analyse_risque": "une phrase courte sur le risque principal"
+    }}
+    """
+    response = model.generate_content(prompt)
     try:
-        t = yf.Ticker(symbol)
-        return t.info
+        # Nettoyage de la réponse pour ne garder que le JSON
+        clean_json = response.text.strip().replace('```json', '').replace('```', '')
+        return json.loads(clean_json)
     except:
         return None
 
-# --- SIDEBAR ---
+# --- INTERFACE ---
+st.title("🤖 Terminal Financier Augmenté par l'IA")
+
 with st.sidebar:
-    st.header("Configuration")
-    ticker = st.text_input("Ticker", "AI.PA").upper()
-    analyze = st.button("Lancer le Diagnostic")
+    ticker = st.text_input("Ticker Yahoo Finance", "AI.PA").upper()
+    btn = st.button("Lancer le Diagnostic IA")
 
-# --- LOGIQUE D'INTERPRÉTATION ---
-def diagnostic(value, threshold, mode="sup"):
-    if value == "N/A": return "⚪ Donnée manquante", "grey"
-    if mode == "sup": # Plus c'est haut, mieux c'est (ex: ROE)
-        if value > threshold: return "✅ Solide", "green"
-        return "⚠️ À surveiller", "orange"
-    else: # Plus c'est bas, mieux c'est (ex: Gearing)
-        if value < threshold: return "✅ Sain", "green"
-        return "🚨 Risqué", "red"
-
-# --- AFFICHAGE ---
-if analyze:
-    data = get_full_data(ticker)
-    if data:
-        st.header(f"Analyse de {data.get('longName')} - {ticker}")
+if btn:
+    with st.spinner("L'IA analyse le secteur..."):
+        data = get_stock_data(ticker)
+        ai_data = get_ai_insight(data)
         
-        # Préparation des ratios
-        ratios = {
-            "ROE (Rentabilité)": (data.get('returnOnEquity', 0) * 100, 15, "sup", "%"),
-            "Gearing (Endettement)": (data.get('debtToEquity', 0) / 100, 1.2, "inf", "x"),
-            "Marge Opé.": (data.get('operatingMargins', 0) * 100, 10, "sup", "%"),
-            "P/E (Valorisation)": (data.get('trailingPE', 0), 20, "inf", "x"),
-            "Current Ratio (Liquidité)": (data.get('currentRatio', 0), 1, "sup", "x")
-        }
-
-        # --- TABLEAU DE BORD (Le "Tableur" automatisé) ---
-        st.subheader("📋 Tableau de Bord de l'Analyste")
-        
-        rows = []
-        for name, (val, thresh, mode, unit) in ratios.items():
-            status, color = diagnostic(val, thresh, mode)
-            rows.append({
-                "Indicateur": name,
-                "Valeur": f"{val:.2f} {unit}" if isinstance(val, (int, float)) else "N/A",
-                "Seuil Critique": f"{thresh} {unit}",
-                "Verdict": status
-            })
-        
-        df = pd.DataFrame(rows)
-        st.table(df) # Utilisation de st.table pour le look "Spreadsheet"
-
-        # --- INTERPRÉTATION GLOBALE ---
-        st.markdown("---")
-        st.subheader("🧐 Synthèse de l'Expert")
-        
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            st.info("**Points Forts :**")
-            if ratios["ROE (Rentabilité)"][0] > 15:
-                st.write("- Capacité d'autofinancement élevée (ROE > 15%).")
-            if ratios["Gearing (Endettement)"][0] < 1:
-                st.write("- Structure financière saine, peu de dépendance à la dette.")
-        
-        with col2:
-            st.warning("**Points de Vigilance :**")
-            if ratios["P/E (Valorisation)"][0] > 25:
-                st.write("- L'action semble chère payée par rapport aux bénéfices.")
-            if ratios["Current Ratio (Liquidité)"][0] < 1:
-                st.write("- Attention : l'entreprise pourrait manquer de cash à court terme.")
-
-    else:
-        st.error("Ticker non trouvé.")
+        if data and ai_data:
+            st.header(f"Analyse de {data.get('longName')}")
+            
+            # --- LE TABLEAU COMPARATIF DYNAMIQUE ---
+            col1, col2 = st.columns([2, 1])
+            
+            with col1:
+                st.subheader("📊 Comparaison Réelle vs Secteur (IA)")
+                df_comp = pd.DataFrame([
+                    {"Indicateur": "ROE (%)", "Entreprise": f"{data.get('returnOnEquity',0)*100:.2f}%", "Moyenne Secteur (IA)": ai_data['bench_roe']},
+                    {"Indicateur": "P/E Ratio", "Entreprise": f"{data.get('trailingPE',0):.2f}x", "Moyenne Secteur (IA)": ai_data['bench_pe']},
+                    {"Indicateur": "Gearing", "Entreprise": f"{data.get('debtToEquity',0)/100:.2f}x", "Moyenne Secteur (IA)": ai_data['bench_gearing']}
+                ])
+                st.table(df_comp)
+            
+            with col2:
+                st.subheader("🚩 Diagnostic IA")
+                st.warning(ai_data['analyse_risque'])
+                
+            # --- GRAPH ---
+            st.line_chart(yf.Ticker(ticker).history(period="1y")['Close'])
